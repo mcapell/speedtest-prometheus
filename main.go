@@ -70,6 +70,8 @@ func runSpeedTest() (*speedtest.Server, error) {
 
 	target := targets[0]
 
+	slog.Info("start speed test")
+
 	if err := target.PingTest(nil); err != nil {
 		return nil, fmt.Errorf("error running the ping test: %w", err)
 
