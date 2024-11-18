@@ -7,5 +7,6 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o speedtest .
 
 FROM scratch
 WORKDIR /
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /app/speedtest .
 ENTRYPOINT ["./speedtest"]
