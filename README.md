@@ -27,3 +27,7 @@ Run the application:
 ```bash
 go run main.go
 ```
+
+Or the docker image:
+
+https://hub.docker.com/r/mcapell/speedtest
