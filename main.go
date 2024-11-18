@@ -17,12 +17,12 @@ var (
 		Objectives: map[float64]float64{0.5: 0.05, 0.9: 0.01, 0.99: 0.001},
 	})
 	uploadSpeed = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "upload_speed_ms",
-		Help: "Upload speed in ms.",
+		Name: "upload_speed",
+		Help: "Upload speed in bytes/second.",
 	})
 	downloadSpeed = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "download_speed_ms",
-		Help: "Download speed in ms.",
+		Name: "download_speed",
+		Help: "Download speed in bytes/second.",
 	})
 )
 
