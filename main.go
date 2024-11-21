@@ -5,32 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/push"
 	"github.com/showwin/speedtest-go/speedtest"
 )
-
-var (
-	latency = prometheus.NewSummary(prometheus.SummaryOpts{
-		Name:       "latency",
-		Help:       "Speed test latency.",
-		Objectives: map[float64]float64{0.5: 0.05, 0.9: 0.01, 0.99: 0.001},
-	})
-	uploadSpeed = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "upload_speed",
-		Help: "Upload speed in bytes/second.",
-	})
-	downloadSpeed = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "download_speed",
-		Help: "Download speed in bytes/second.",
-	})
-)
-
-func init() {
-	prometheus.MustRegister(latency)
-	prometheus.MustRegister(uploadSpeed)
-	prometheus.MustRegister(downloadSpeed)
-}
 
 func main() {
 	logger := initLogger()
@@ -49,20 +25,23 @@ func main() {
 	}
 	defer shutdown()
 
+	ctx, span := tracer.Start(ctx, "speedtest")
+	defer span.End()
+
 	speedTest, err := runSpeedTest(ctx)
 	if err != nil {
 		logger.Error("speed test failed", "error", err)
 		os.Exit(1)
 	}
 
-	if err := pushMetrics(prometheusHost, speedTest); err != nil {
+	if err := pushMetrics(ctx, prometheusHost, speedTest); err != nil {
 		logger.Error("metrics storage failed", "error", err)
 		os.Exit(1)
 	}
 }
 
 func runSpeedTest(ctx context.Context) (*speedtest.Server, error) {
-	_, span := tracer.Start(ctx, "runSpeedTest")
+	ctx, span := tracer.Start(ctx, "runSpeedTest")
 	defer span.End()
 
 	logger := FromContext(ctx)
@@ -102,19 +81,4 @@ func runSpeedTest(ctx context.Context) (*speedtest.Server, error) {
 	logger.Info(fmt.Sprintf("Latency: %s, Download: %s, Upload: %s\n", target.Latency, target.DLSpeed, target.ULSpeed))
 
 	return target, nil
-}
-
-func pushMetrics(prometheusHost string, speedTest *speedtest.Server) error {
-	_, span := tracer.Start(context.Background(), "pushMetrics")
-	defer span.End()
-
-	latency.Observe(float64(speedTest.Latency.Microseconds()))
-	uploadSpeed.Set(float64(speedTest.ULSpeed))
-	downloadSpeed.Set(float64(speedTest.DLSpeed))
-
-	return push.New(prometheusHost, "speedtest").
-		Collector(latency).
-		Collector(uploadSpeed).
-		Collector(downloadSpeed).
-		Push()
 }
