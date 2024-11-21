@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	"github.com/showwin/speedtest-go/speedtest"
+	"go.opentelemetry.io/otel"
 )
 
 var (
@@ -39,6 +41,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := initOpentelemetry(); err != nil {
+		slog.Error("opentelemetry init", "error", err)
+		os.Exit(1)
+	}
+
 	speedTest, err := runSpeedTest()
 	if err != nil {
 		slog.Error("speed test failed", "error", err)
@@ -52,6 +59,9 @@ func main() {
 }
 
 func runSpeedTest() (*speedtest.Server, error) {
+	_, span := tracer.Start(context.Background(), "runSpeedTest")
+	defer span.End()
+
 	var speedtestClient = speedtest.New()
 
 	serverList, err := speedtestClient.FetchServers()
@@ -90,6 +100,9 @@ func runSpeedTest() (*speedtest.Server, error) {
 }
 
 func pushMetrics(prometheusHost string, speedTest *speedtest.Server) error {
+	_, span := tracer.Start(context.Background(), "pushMetrics")
+	defer span.End()
+
 	latency.Observe(float64(speedTest.Latency.Microseconds()))
 	uploadSpeed.Set(float64(speedTest.ULSpeed))
 	downloadSpeed.Set(float64(speedTest.DLSpeed))
@@ -99,4 +112,26 @@ func pushMetrics(prometheusHost string, speedTest *speedtest.Server) error {
 		Collector(uploadSpeed).
 		Collector(downloadSpeed).
 		Push()
+}
+
+func initOpentelemetry() error {
+	ctx := context.Background()
+
+	exp, err := newExporter(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to initialize otel exporter: %w", err)
+	}
+
+	tp, err := newTraceProvider(exp, "speedtest")
+	if err != nil {
+		return fmt.Errorf("failed to initialize otel provider: %w", err)
+	}
+
+	// Handle shutdown properly so nothing leaks.
+	defer func() { _ = tp.Shutdown(ctx) }()
+
+	otel.SetTracerProvider(tp)
+	tracer = tp.Tracer("github.com/mcapell/speedtest-prometheus")
+
+	return nil
 }
