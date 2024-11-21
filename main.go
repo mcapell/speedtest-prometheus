@@ -3,13 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"os"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	"github.com/showwin/speedtest-go/speedtest"
-	"go.opentelemetry.io/otel"
 )
 
 var (
@@ -35,32 +33,39 @@ func init() {
 }
 
 func main() {
+	logger := initLogger()
+	ctx := WithContext(context.Background(), logger)
+
 	prometheusHost := os.Getenv("PROMETHEUS_HOST")
 	if prometheusHost == "" {
-		slog.Error("`PROMETHEUS_HOST` is not defined")
+		logger.Error("`PROMETHEUS_HOST` is not defined")
 		os.Exit(1)
 	}
 
-	if err := initOpentelemetry(); err != nil {
-		slog.Error("opentelemetry init", "error", err)
-		os.Exit(1)
-	}
-
-	speedTest, err := runSpeedTest()
+	shutdown, err := initTracer(ctx, "speedtest")
 	if err != nil {
-		slog.Error("speed test failed", "error", err)
+		logger.Error("open-telemetry setup", "error", err)
+		os.Exit(1)
+	}
+	defer shutdown()
+
+	speedTest, err := runSpeedTest(ctx)
+	if err != nil {
+		logger.Error("speed test failed", "error", err)
 		os.Exit(1)
 	}
 
 	if err := pushMetrics(prometheusHost, speedTest); err != nil {
-		slog.Error("metrics storage failed", "error", err)
+		logger.Error("metrics storage failed", "error", err)
 		os.Exit(1)
 	}
 }
 
-func runSpeedTest() (*speedtest.Server, error) {
-	_, span := tracer.Start(context.Background(), "runSpeedTest")
+func runSpeedTest(ctx context.Context) (*speedtest.Server, error) {
+	_, span := tracer.Start(ctx, "runSpeedTest")
 	defer span.End()
+
+	logger := FromContext(ctx)
 
 	var speedtestClient = speedtest.New()
 
@@ -80,7 +85,7 @@ func runSpeedTest() (*speedtest.Server, error) {
 
 	target := targets[0]
 
-	slog.Info("start speed test")
+	logger.Info("start speed test")
 
 	if err := target.PingTest(nil); err != nil {
 		return nil, fmt.Errorf("error running the ping test: %w", err)
@@ -94,7 +99,7 @@ func runSpeedTest() (*speedtest.Server, error) {
 		return nil, fmt.Errorf("error running upload test: %w", err)
 	}
 
-	slog.Info(fmt.Sprintf("Latency: %s, Download: %s, Upload: %s\n", target.Latency, target.DLSpeed, target.ULSpeed))
+	logger.Info(fmt.Sprintf("Latency: %s, Download: %s, Upload: %s\n", target.Latency, target.DLSpeed, target.ULSpeed))
 
 	return target, nil
 }
@@ -112,26 +117,4 @@ func pushMetrics(prometheusHost string, speedTest *speedtest.Server) error {
 		Collector(uploadSpeed).
 		Collector(downloadSpeed).
 		Push()
-}
-
-func initOpentelemetry() error {
-	ctx := context.Background()
-
-	exp, err := newExporter(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to initialize otel exporter: %w", err)
-	}
-
-	tp, err := newTraceProvider(exp, "speedtest")
-	if err != nil {
-		return fmt.Errorf("failed to initialize otel provider: %w", err)
-	}
-
-	// Handle shutdown properly so nothing leaks.
-	defer func() { _ = tp.Shutdown(ctx) }()
-
-	otel.SetTracerProvider(tp)
-	tracer = tp.Tracer("github.com/mcapell/speedtest-prometheus")
-
-	return nil
 }
